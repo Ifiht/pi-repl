@@ -1,7 +1,7 @@
 {
   "name": "pi-repl",
-  "version": "0.1.1",
-  "description": "Collaborative tmux-backed Python and IPython REPL sessions for pi",
+  "version": "0.2.0",
+  "description": "Collaborative tmux-backed Python, IPython, and Julia REPL sessions for pi",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -18,12 +18,14 @@
     "repl",
     "tmux",
     "python",
-    "ipython"
+    "ipython",
+    "julia"
   ],
   "files": [
     "index.ts",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "shared-julia-repl.png"
   ],
   "pi": {
     "extensions": [
