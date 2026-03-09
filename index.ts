@@ -16,6 +16,7 @@ import { join } from "node:path";
 const SUPPORTED_RUNTIMES = ["julia", "python", "ipython", "r", "bun"] as const;
 const DEFAULT_PYTHON_SESSION = "pi-repl-python";
 const DEFAULT_JULIA_SESSION = "pi-repl-julia";
+const DEFAULT_R_SESSION = "pi-repl-r";
 const DEFAULT_CAPTURE_LINES = 20;
 const DEFAULT_STARTUP_WAIT_MS = 5_000;
 const DEFAULT_STARTUP_POLL_MS = 250;
@@ -170,8 +171,9 @@ const REPL_HISTORY_OPTION = "@pi_repl_history_path";
 
 type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 type PythonRuntime = "python" | "ipython";
-type ImplementedRuntime = PythonRuntime | "julia";
-type SessionSelector = "python" | "julia";
+type ManagedRuntime = PythonRuntime | "julia" | "r";
+type ImplementedRuntime = PythonRuntime | "julia" | "r";
+type SessionSelector = "python" | "julia" | "r";
 
 type ReplCommand =
 	| { action: "help" }
@@ -203,10 +205,10 @@ type ReplSendDetails = {
 };
 
 const REPL_SEND_PARAMS = Type.Object({
-	code: Type.String({ description: "Python, IPython, or Julia code to execute in the shared REPL session." }),
+	code: Type.String({ description: "Python, IPython, Julia, or R code to execute in the shared REPL session." }),
 	target: Type.Optional(
 		Type.String({
-			description: "Optional target REPL: python or julia. If omitted, repl_send uses the shared Python/IPython session.",
+			description: "Optional target REPL: python, julia, or r. If omitted, repl_send uses the shared Python/IPython session.",
 		}),
 	),
 	timeoutMs: Type.Optional(
@@ -221,7 +223,7 @@ const REPL_SEND_PARAMS = Type.Object({
 const REPL_STATUS_PARAMS = Type.Object({
 	target: Type.Optional(
 		Type.String({
-			description: "Optional session target: python or julia. If omitted, report all shared REPL sessions.",
+			description: "Optional session target: python, julia, or r. If omitted, report all shared REPL sessions.",
 		}),
 	),
 });
@@ -252,16 +254,20 @@ function isPythonRuntime(value: SupportedRuntime): value is PythonRuntime {
 	return value === "python" || value === "ipython";
 }
 
-function isImplementedRuntime(value: SupportedRuntime): value is ImplementedRuntime {
-	return value === "python" || value === "ipython" || value === "julia";
+function isSessionTargetRuntime(value: string): value is ManagedRuntime {
+	return value === "python" || value === "ipython" || value === "julia" || value === "r";
 }
 
-function toSessionSelector(runtime: SupportedRuntime): SessionSelector {
-	return runtime === "julia" ? "julia" : "python";
+function toSessionSelector(runtime: ManagedRuntime): SessionSelector {
+	if (runtime === "julia") return "julia";
+	if (runtime === "r") return "r";
+	return "python";
 }
 
 function getSessionNameForSelector(selector: SessionSelector): string {
-	return selector === "julia" ? DEFAULT_JULIA_SESSION : DEFAULT_PYTHON_SESSION;
+	if (selector === "julia") return DEFAULT_JULIA_SESSION;
+	if (selector === "r") return DEFAULT_R_SESSION;
+	return DEFAULT_PYTHON_SESSION;
 }
 
 function getSessionHistoryPath(sessionName: string): string {
@@ -291,24 +297,28 @@ function formatUsage(): string {
 		"  /repl python",
 		"  /repl ipython",
 		"  /repl julia",
-		"  /repl status [python|julia]",
+		"  /repl r",
+		"  /repl status [python|julia|r]",
 		"  /repl env [python]",
-		"  /repl attach [python|julia]",
-		"  /repl stop [python|julia]",
+		"  /repl attach [python|julia|r]",
+		"  /repl stop [python|julia|r]",
 		"",
-		"Supported runtimes right now: python, ipython, julia",
+		"Supported runtimes right now: python, ipython, julia, r",
+		"For R, both /repl R and /repl r work. The same applies to /lab, /repl status, /repl attach, and /repl stop.",
 		"",
 		"Current real implementation:",
 		"  - /repl python and /repl ipython manage the shared tmux session pi-repl-python",
 		"  - /repl julia manages the shared tmux session pi-repl-julia",
-		"  - /repl status, /repl attach, and /repl stop can target Python/IPython or Julia",
+		"  - /repl r manages the shared tmux session pi-repl-r",
+		"  - /repl status, /repl attach, and /repl stop can target Python/IPython, Julia, or R",
 		"  - /repl env inspects the shared Python/IPython session",
-		"  - the repl_send tool can execute code in the shared Python/IPython or Julia session",
+		"  - the repl_send tool can execute code in the shared Python/IPython, Julia, or R session",
 		"",
 		"Examples:",
 		"  /repl ipython",
 		"  /repl julia",
-		"  /repl status julia",
+		"  /repl r",
+		"  /repl status r",
 		"  /repl attach",
 	].join("\n");
 }
@@ -334,7 +344,7 @@ function parseReplCommand(args: string): ReplCommand {
 
 		if (rest.length === 1) {
 			const selector = rest[0].toLowerCase();
-			if (!isSupportedRuntime(selector)) {
+			if (!isSessionTargetRuntime(selector)) {
 				return {
 					action: "error",
 					message: `Unknown argument for /repl ${firstLower}: ${rest[0]}`,
@@ -436,11 +446,17 @@ function shellQuote(value: string): string {
 	return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
-function buildDefaultShellRuntimeCommand(runtime: ImplementedRuntime): { shell: string; command: string } {
+function buildRuntimeLaunchCommand(runtime: ManagedRuntime): string {
+	if (runtime === "r") return "R";
+	return runtime;
+}
+
+function buildDefaultShellRuntimeCommand(runtime: ManagedRuntime): { shell: string; command: string } {
 	const shell = process.env.SHELL?.trim() || "/bin/sh";
+	const runtimeCommand = buildRuntimeLaunchCommand(runtime);
 	return {
 		shell,
-		command: `${shellQuote(shell)} -i -l -c ${shellQuote(runtime)}`,
+		command: `${shellQuote(shell)} -i -l -c ${shellQuote(runtimeCommand)}`,
 	};
 }
 
@@ -583,6 +599,7 @@ function formatSessionInfo(info: SessionInfo): string {
 
 function getSessionDisplayName(selector: SessionSelector, info?: SessionInfo | null): string {
 	if (selector === "julia") return "Julia";
+	if (selector === "r") return "R";
 	if (info?.runtime === "ipython") return "Python/IPython";
 	return "Python/IPython";
 }
@@ -596,6 +613,8 @@ async function listRunningSharedSessions(
 	if (pythonInfo) sessions.push({ selector: "python", info: pythonInfo });
 	const juliaInfo = await readSessionInfo(pi, DEFAULT_JULIA_SESSION, cwd);
 	if (juliaInfo) sessions.push({ selector: "julia", info: juliaInfo });
+	const rInfo = await readSessionInfo(pi, DEFAULT_R_SESSION, cwd);
+	if (rInfo) sessions.push({ selector: "r", info: rInfo });
 	return sessions;
 }
 
@@ -647,6 +666,26 @@ async function waitForJuliaSessionInfo(
 	return latestInfo;
 }
 
+async function waitForRSessionInfo(
+	pi: ExtensionAPI,
+	cwd: string,
+	shellPath: string,
+): Promise<SessionInfo | null> {
+	const deadline = Date.now() + DEFAULT_STARTUP_WAIT_MS;
+	const shellName = shellPath.split("/").pop() ?? shellPath;
+	let latestInfo: SessionInfo | null = null;
+
+	while (Date.now() < deadline) {
+		latestInfo = await readSessionInfo(pi, DEFAULT_R_SESSION, cwd);
+		if (!latestInfo) return null;
+		if (latestInfo.currentCommand !== shellName) return latestInfo;
+		if (/(^|\n)>\s*$/.test(latestInfo.tail)) return latestInfo;
+		await sleep(DEFAULT_STARTUP_POLL_MS);
+	}
+
+	return latestInfo;
+}
+
 type ReplControlPaths = {
 	dir: string;
 	sourceFile: string;
@@ -667,6 +706,14 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "jr.jl"),
 			doneFile: join(REPL_CONTROL_ROOT, "jr.done"),
+		};
+	}
+
+	if (sessionName === DEFAULT_R_SESSION) {
+		return {
+			dir: REPL_CONTROL_ROOT,
+			sourceFile: join(REPL_CONTROL_ROOT, "rr.R"),
+			doneFile: join(REPL_CONTROL_ROOT, "rr.done"),
 		};
 	}
 
@@ -724,8 +771,38 @@ function buildJuliaControlSource(code: string, doneFile: string): string {
 	].join("\n");
 }
 
+function buildRControlSource(code: string, doneFile: string): string {
+	return [
+		"local({",
+		`  .__pi_repl_done_file <- ${JSON.stringify(doneFile)}`,
+		`  .__pi_repl_code <- ${JSON.stringify(code)}`,
+		"  tryCatch({",
+		"    .__pi_repl_exprs <- parse(text = .__pi_repl_code, keep.source = FALSE)",
+		"    .__pi_repl_value <- NULL",
+		"    .__pi_repl_visible <- FALSE",
+		"    for (.__pi_repl_expr in .__pi_repl_exprs) {",
+		"      .__pi_repl_result <- withVisible(eval(.__pi_repl_expr, envir = .GlobalEnv))",
+		"      .__pi_repl_value <- .__pi_repl_result$value",
+		"      .__pi_repl_visible <- isTRUE(.__pi_repl_result$visible)",
+		"    }",
+		"    if (.__pi_repl_visible) print(.__pi_repl_value)",
+		"  }, error = function(e) {",
+		"    .__pi_repl_call <- conditionCall(e)",
+		"    if (is.null(.__pi_repl_call)) {",
+		"      message(\"Error: \", conditionMessage(e))",
+		"    } else {",
+		"      message(\"Error in \", paste(deparse(.__pi_repl_call), collapse = \" \"), \": \", conditionMessage(e))",
+		"    }",
+		"  }, finally = {",
+		"    writeLines(\"done\", .__pi_repl_done_file)",
+		"  })",
+		"})",
+	].join("\n");
+}
+
 function buildReplControlSource(runtime: ImplementedRuntime, code: string, doneFile: string): string {
 	if (runtime === "julia") return buildJuliaControlSource(code, doneFile);
+	if (runtime === "r") return buildRControlSource(code, doneFile);
 	return buildPythonControlSource(runtime, code, doneFile);
 }
 
@@ -733,6 +810,9 @@ function buildReplSubmissionLine(runtime: ImplementedRuntime, sourceFile: string
 	const quotedPath = JSON.stringify(sourceFile);
 	if (runtime === "julia") {
 		return `include(${quotedPath})`;
+	}
+	if (runtime === "r") {
+		return `source(${quotedPath},local=.GlobalEnv)`;
 	}
 	return `exec(open(${quotedPath}).read(),globals())`;
 }
@@ -855,7 +935,7 @@ function extractPaneDelta(before: string, after: string): string {
 
 function cleanupReplDelta(delta: string, submissionLine: string, previewComment?: string): string {
 	const lines = stripBoundaryBlankLines(delta).split("\n");
-	const loaderHints = [submissionLine, "exec(open(", "run_cell(open(", "include(", "/tmp/pr.py", "/tmp/jr.jl", "/tmp/pi-repl", "control.py"];
+	const loaderHints = [submissionLine, "exec(open(", "run_cell(open(", "include(", "source(", "/tmp/pr.py", "/tmp/jr.jl", "/tmp/rr.R", "/tmp/pi-repl", "control.py"];
 	const previewHints = previewComment ? [previewComment, "# pi-repl:"] : ["# pi-repl:"];
 
 	while (lines.length > 0) {
@@ -872,7 +952,7 @@ function cleanupReplDelta(delta: string, submissionLine: string, previewComment?
 			lines.shift();
 			continue;
 		}
-		if (/^\s*\.\.\.:/.test(first)) {
+		if (/^\s*\.\.\.:/.test(first) || /^>\s*$/.test(first) || /^\+\s*$/.test(first)) {
 			lines.shift();
 			continue;
 		}
@@ -886,7 +966,9 @@ function cleanupReplDelta(delta: string, submissionLine: string, previewComment?
 			/^>>>\s*$/.test(last) ||
 			/^In \[\d+\]:\s*$/.test(last) ||
 			/^\s*\.\.\.:\s*$/.test(last) ||
-			/^julia>\s*$/.test(last)
+			/^julia>\s*$/.test(last) ||
+			/^>\s*$/.test(last) ||
+			/^\+\s*$/.test(last)
 		) {
 			lines.pop();
 			continue;
@@ -938,6 +1020,7 @@ function normalizeReplSendTarget(target?: string): SessionSelector | undefined {
 	if (!trimmed) return undefined;
 	if (trimmed === "python" || trimmed === "ipython") return "python";
 	if (trimmed === "julia") return "julia";
+	if (trimmed === "r") return "r";
 	throw new Error(`Unknown repl_send target: ${target}`);
 }
 
@@ -961,6 +1044,11 @@ async function runReplCode(
 				`No default Julia REPL session is running (${DEFAULT_JULIA_SESSION}). Start one with /repl julia first.`,
 			);
 		}
+		if (target === "r") {
+			throw new Error(
+				`No default R REPL session is running (${DEFAULT_R_SESSION}). Start one with /repl R or /repl r first.`,
+			);
+		}
 		throw new Error(
 			`No default Python/IPython REPL session is running (${DEFAULT_PYTHON_SESSION}). Start one with /repl python or /repl ipython first.`,
 		);
@@ -973,12 +1061,17 @@ async function runReplCode(
 				`Could not inspect the default Julia REPL session (${DEFAULT_JULIA_SESSION}). Start it again with /repl julia.`,
 			);
 		}
+		if (target === "r") {
+			throw new Error(
+				`Could not inspect the default R REPL session (${DEFAULT_R_SESSION}). Start it again with /repl R or /repl r.`,
+			);
+		}
 		throw new Error(
 			`Could not inspect the default Python/IPython REPL session (${DEFAULT_PYTHON_SESSION}). Start it again with /repl python or /repl ipython.`,
 		);
 	}
 
-	const runtime: ImplementedRuntime = target === "julia" ? "julia" : normalizePythonRuntime(sessionInfo);
+	const runtime: ImplementedRuntime = target === "julia" ? "julia" : target === "r" ? "r" : normalizePythonRuntime(sessionInfo);
 	const timeoutMs = clampReplSendTimeout(params.timeoutMs);
 	const beforeCapture = await capturePaneOutput(pi, sessionName, ctx.cwd);
 	const prepared = prepareReplControlFiles(sessionName, runtime, code);
@@ -1182,6 +1275,13 @@ function formatNoSessionRunning(selector: SessionSelector): string {
 		].join("\n");
 	}
 
+	if (selector === "r") {
+		return [
+			`No default R REPL session is running (${DEFAULT_R_SESSION}).`,
+			"Start one with /repl R or /repl r, or /lab R or /lab r.",
+		].join("\n");
+	}
+
 	return [
 		`No default Python/IPython REPL session is running (${DEFAULT_PYTHON_SESSION}).`,
 		"Start one with /repl python, /repl ipython, /lab python, or /lab ipython.",
@@ -1193,6 +1293,7 @@ function buildReplStatusDetails(
 ): Record<string, unknown> {
 	const python = sessions.find((session) => session.selector === "python")?.info;
 	const julia = sessions.find((session) => session.selector === "julia")?.info;
+	const r = sessions.find((session) => session.selector === "r")?.info;
 
 	return {
 		python: {
@@ -1214,6 +1315,16 @@ function buildReplStatusDetails(
 			currentCommand: julia?.currentCommand ?? undefined,
 			currentPath: julia?.currentPath ?? undefined,
 			attachCommand: formatAttachCommand(DEFAULT_JULIA_SESSION),
+		},
+		r: {
+			running: Boolean(r),
+			sessionName: r?.sessionName ?? DEFAULT_R_SESSION,
+			runtime: r?.runtime ?? undefined,
+			historyPath: r?.historyPath ?? undefined,
+			historyLogging: Boolean(r?.historyPath),
+			currentCommand: r?.currentCommand ?? undefined,
+			currentPath: r?.currentPath ?? undefined,
+			attachCommand: formatAttachCommand(DEFAULT_R_SESSION),
 		},
 		runningSessions: sessions.map((session) => ({
 			target: session.selector,
@@ -1274,6 +1385,45 @@ async function startDefaultJuliaSession(pi: ExtensionAPI, ctx: ExtensionCommandC
 	);
 }
 
+async function startDefaultRSession(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	const exists = await tmuxSessionExists(pi, DEFAULT_R_SESSION, ctx.cwd);
+	if (exists) {
+		const info = await readSessionInfo(pi, DEFAULT_R_SESSION, ctx.cwd);
+		notify(
+			ctx,
+			info ? `Default R REPL session is already running.\n\n${formatSessionInfo(info)}` : ["Default R REPL session is already running.", "", formatAttachInstructions(DEFAULT_R_SESSION)].join("\n"),
+			"info",
+		);
+		return;
+	}
+
+	const shellLaunch = buildDefaultShellRuntimeCommand("r");
+	const createResult = await execTmux(pi, ["new-session", "-d", "-s", DEFAULT_R_SESSION, "-c", ctx.cwd, shellLaunch.command], ctx.cwd, 10_000);
+	if (createResult.code !== 0) {
+		const reason = createResult.stderr.trim() || createResult.stdout.trim() || `exit code ${createResult.code}`;
+		notify(ctx, `Failed to create tmux session ${DEFAULT_R_SESSION}: ${reason}`, "error");
+		return;
+	}
+
+	const history = await enableSessionHistoryLogging(pi, DEFAULT_R_SESSION, ctx.cwd);
+	await setTmuxSessionOption(pi, DEFAULT_R_SESSION, REPL_RUNTIME_OPTION, "r", ctx.cwd);
+	const info = await waitForRSessionInfo(pi, ctx.cwd, shellLaunch.shell);
+
+	if (history.warning) {
+		notify(ctx, history.warning, "warning");
+	}
+
+	notify(
+		ctx,
+		[
+			`Started default R REPL session: ${DEFAULT_R_SESSION}`,
+			`Launch method: ${shellLaunch.shell} -i -l -c 'R' inside tmux.`,
+			info ? `\n${formatSessionInfo(info)}` : ["", formatAttachInstructions(DEFAULT_R_SESSION)].join("\n"),
+		].join("\n"),
+		"info",
+	);
+}
+
 async function showReplStatus(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
@@ -1295,7 +1445,7 @@ async function showReplStatus(
 	if (running.length === 0) {
 		notify(
 			ctx,
-			"No shared REPL sessions are running. Start one with /repl python, /repl ipython, or /repl julia.",
+			"No shared REPL sessions are running. Start one with /repl python, /repl ipython, /repl julia, or /repl r.",
 			"info",
 		);
 		return;
@@ -1329,7 +1479,7 @@ async function stopReplSession(
 		if (running.length === 0) {
 			notify(
 				ctx,
-				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, or /repl julia.",
+				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, /repl julia, or /repl r.",
 				"info",
 			);
 			return;
@@ -1342,6 +1492,7 @@ async function stopReplSession(
 					"Use one of:",
 					"/repl stop python",
 					"/repl stop julia",
+					"/repl stop r",
 				].join("\n"),
 				"warning",
 			);
@@ -1365,7 +1516,7 @@ async function stopReplSession(
 		return;
 	}
 
-	const label = selector === "julia" ? "Julia" : "Python/IPython";
+	const label = selector === "julia" ? "Julia" : selector === "r" ? "R" : "Python/IPython";
 	notify(ctx, `Stopped default ${label} REPL session: ${sessionName}`, "info");
 }
 
@@ -1379,7 +1530,7 @@ async function attachReplSession(
 		if (running.length === 0) {
 			notify(
 				ctx,
-				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, or /repl julia.",
+				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, /repl julia, or /repl r.",
 				"info",
 			);
 			return;
@@ -1438,7 +1589,7 @@ async function handleRepl(pi: ExtensionAPI, args: string, ctx: ExtensionCommandC
 			await showReplStatus(pi, ctx, parsed.runtime ? toSessionSelector(parsed.runtime) : undefined);
 			return;
 		case "env":
-			if (parsed.runtime === "julia") {
+			if (parsed.runtime && !isPythonRuntime(parsed.runtime)) {
 				notify(ctx, "Environment inspection is currently implemented only for the shared Python/IPython session.", "warning");
 				return;
 			}
@@ -1479,6 +1630,16 @@ async function handleRepl(pi: ExtensionAPI, args: string, ctx: ExtensionCommandC
 				return;
 			}
 
+			if (parsed.runtime === "r") {
+				if (parsed.name) {
+					notify(ctx, "Named R sessions are not implemented yet. For now, use /repl R or /repl r with no --name.", "warning");
+					return;
+				}
+
+				await startDefaultRSession(pi, ctx);
+				return;
+			}
+
 			const sessionName = buildSessionName(parsed.runtime, parsed.name);
 			const nameNote = parsed.name ? ` (from name: ${parsed.name})` : "";
 			notify(
@@ -1487,7 +1648,7 @@ async function handleRepl(pi: ExtensionAPI, args: string, ctx: ExtensionCommandC
 					"Scaffold only: parsed REPL start request.",
 					`Runtime: ${parsed.runtime}`,
 					`tmux session: ${sessionName}${nameNote}`,
-					"Only Python, IPython, and basic Julia session management are implemented so far.",
+					"Only Python, IPython, Julia, and basic R session management are implemented so far.",
 				].join("\n"),
 				"info",
 			);
@@ -1514,11 +1675,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "repl_status",
 		label: "REPL Status",
-		description: "Inspect shared REPL session state for Python/IPython and Julia.",
-		promptSnippet: "Check whether the shared Python/IPython and Julia REPL sessions are running.",
+		description: "Inspect shared REPL session state for Python/IPython, Julia, and R.",
+		promptSnippet: "Check whether the shared Python/IPython, Julia, and R REPL sessions are running.",
 		promptGuidelines: [
 			"Use this tool before claiming whether a shared REPL is running, especially after a previous failure or status change.",
-			"If the user asks specifically about Julia, use target='julia'. If they ask specifically about Python or IPython, use target='python'.",
+			"If the user asks specifically about Julia, use target='julia'. If they ask specifically about R, use target='r'. If they ask specifically about Python or IPython, use target='python'.",
 			"If you need context about prior direct REPL interaction, inspect repl_status details and read the session history file listed there.",
 		],
 		parameters: REPL_STATUS_PARAMS,
@@ -1527,6 +1688,7 @@ export default function (pi: ExtensionAPI) {
 			let target: SessionSelector | undefined;
 			if (targetRaw) {
 				if (targetRaw === "julia") target = "julia";
+				else if (targetRaw === "r") target = "r";
 				else if (targetRaw === "python" || targetRaw === "ipython") target = "python";
 				else throw new Error(`Unknown repl_status target: ${targetRaw}`);
 			}
@@ -1585,11 +1747,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "repl_send",
 		label: "REPL Send",
-		description: `Execute code in the shared default Python/IPython or Julia tmux REPL sessions (${DEFAULT_PYTHON_SESSION}, ${DEFAULT_JULIA_SESSION}). Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first).`,
-		promptSnippet: "Execute a small snippet in the shared Python/IPython or Julia REPL and return its output.",
+		description: `Execute code in the shared default Python/IPython, Julia, or R tmux REPL sessions (${DEFAULT_PYTHON_SESSION}, ${DEFAULT_JULIA_SESSION}, ${DEFAULT_R_SESSION}). Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first).`,
+		promptSnippet: "Execute a small snippet in the shared Python/IPython, Julia, or R REPL and return its output.",
 		promptGuidelines: [
-			"Use this tool only after a /repl python, /repl ipython, or /repl julia session has been started.",
-			"If the user asks to run code in Julia or in the shared Julia REPL, use target='julia'. Otherwise use the shared Python/IPython session.",
+			"Use this tool only after a /repl python, /repl ipython, /repl julia, or /repl R session has been started.",
+			"If the user asks to run code in Julia or in the shared Julia REPL, use target='julia'. If they ask to run code in R or in the shared R REPL, use target='r'. Otherwise use the shared Python/IPython session.",
 			"Use repl_status before claiming whether the shared REPL is active if there has been a prior failure or a possible state change.",
 			"If you need context about prior direct REPL interaction, inspect repl_status details and read the session history file listed there.",
 			"The session history file is raw tmux pane output, so expect prompts and echoed input as well as results.",

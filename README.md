@@ -2,7 +2,7 @@
 
 Minimal [pi](https://github.com/badlogic/pi-mono) extension for collaborative REPL sessions using tmux.
 
-`pi-repl` starts a shared Python, IPython, or Julia REPL in tmux that you can attach to from another terminal window. You can work in the REPL directly, or ask pi to send and execute code there.
+`pi-repl` starts a shared Python, IPython, Julia, or R REPL in tmux that you can attach to from another terminal window. You can work in the REPL directly, or ask pi to send and execute code there.
 
 ![Interacting with a shared Julia REPL](./shared-julia-repl.png)
 
@@ -10,14 +10,15 @@ Minimal [pi](https://github.com/badlogic/pi-mono) extension for collaborative RE
 
 ## Current scope
 
-Currently, `pi-repl` supports **Python/IPython** and **Julia**. **R** support is planned.
+Currently, `pi-repl` supports **Python/IPython**, **Julia**, and **R**.
 
 With `pi-repl` you can:
 
 - start a shared REPL from pi
 - attach to that REPL from another terminal window
 - work in the REPL yourself as normal
-- ask pi, in natural language, to run code in the shared REPL
+- ask pi, in natural language, to run code in the shared Python/IPython, Julia, or R REPL
+- start, attach to, inspect, and stop a shared R REPL
 - let pi read the raw shared REPL transcript for extra context when needed
 - check which shared REPL sessions are running
 - inspect which Python interpreter and environment the shared Python/IPython REPL is using with `/repl env`
@@ -50,18 +51,25 @@ Restart pi after installing.
 | `/repl python` | Start the shared Python/IPython session with `python` |
 | `/repl ipython` | Start the shared Python/IPython session with `ipython` |
 | `/repl julia` | Start the shared Julia session with `julia` |
+| `/repl r` | Start the shared R session with `R` |
 | `/lab python` | Same as `/repl python` |
 | `/lab ipython` | Same as `/repl ipython` |
 | `/lab julia` | Same as `/repl julia` |
+| `/lab r` | Same as `/repl r` |
 | `/repl status` | Show running shared REPL sessions |
 | `/repl status python` | Show status for the shared Python/IPython session |
 | `/repl status julia` | Show status for the shared Julia session |
+| `/repl status r` | Show status for the shared R session |
 | `/repl env` | Show which interpreter and environment the shared Python/IPython REPL is using |
 | `/repl attach` | Show how to attach from a new terminal window |
 | `/repl attach julia` | Show how to attach to the shared Julia session |
+| `/repl attach r` | Show how to attach to the shared R session |
 | `/repl stop` | Stop the shared session if only one is running |
 | `/repl stop python` | Stop the shared Python/IPython session |
 | `/repl stop julia` | Stop the shared Julia session |
+| `/repl stop r` | Stop the shared R session |
+
+For R, both `/repl R` and `/repl r` work. The same applies to `/lab`, `/repl status`, `/repl attach`, and `/repl stop`.
 
 ## Tools used by pi
 
@@ -69,8 +77,8 @@ Restart pi after installing.
 
 | Tool | Description |
 |------|-------------|
-| `repl_status` | Inspect shared Python/IPython and Julia REPL state |
-| `repl_send` | Execute code in the running shared Python/IPython or Julia session |
+| `repl_status` | Inspect shared Python/IPython, Julia, and R REPL state |
+| `repl_send` | Execute code in the running shared Python/IPython, Julia, or R session |
 
 Notes:
 
@@ -78,7 +86,7 @@ Notes:
 - while a shared REPL is running, `repl_status` also exposes the raw session history log path
 - pi can read that history file for context about what has already happened in the shared REPL
 - the relevant shared session must already be running before `repl_send`
-- you can ask pi naturally to run code in Python, IPython, or Julia; pi chooses the tool parameters internally
+- you can ask pi naturally to run code in Python, IPython, Julia, or R; pi chooses the tool parameters internally
 - for plain Python, `print(...)` is the safest way to get values back reliably
 - tool output includes both the submitted code and the captured output
 
@@ -88,6 +96,7 @@ The default shared tmux session names are:
 
 - `pi-repl-python` for Python/IPython
 - `pi-repl-julia` for Julia
+- `pi-repl-r` for R
 
 The Python/IPython session can currently be launched in either:
 
@@ -113,6 +122,10 @@ tmux attach -t pi-repl-python
 /repl julia
 /repl status julia
 /repl attach julia
+
+/repl r
+/repl status r
+/repl attach r
 ```
 
 Example requests once the REPL is running:
@@ -121,6 +134,7 @@ Example requests once the REPL is running:
 - `inspect the current globals in the shared Python REPL`
 - `in the shared Julia REPL, load LinearAlgebra`
 - `now find the eigenvalues of [2 1; 1 2] in the shared Julia REPL`
+- `in the shared R REPL, run mean(c(1, 2, 3, 4))`
 
 ## Notes
 
