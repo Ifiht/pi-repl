@@ -1,7 +1,7 @@
 {
   "name": "pi-repl",
-  "version": "0.2.0",
-  "description": "Collaborative tmux-backed Python, IPython, and Julia REPL sessions for pi",
+  "version": "0.3.0",
+  "description": "Collaborative tmux-backed REPL sessions for pi",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,11 @@
     "tmux",
     "python",
     "ipython",
-    "julia"
+    "julia",
+    "r",
+    "haskell",
+    "ghci",
+    "clojure"
   ],
   "files": [
     "index.ts",
