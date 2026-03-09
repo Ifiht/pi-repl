@@ -33,12 +33,6 @@ From GitHub:
 pi install https://github.com/omaclaren/pi-repl
 ```
 
-During development:
-
-```bash
-pi install /absolute/path/to/pi-repl
-```
-
 Restart pi after installing.
 
 ## Commands
