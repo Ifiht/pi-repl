@@ -24,7 +24,149 @@ const MAX_REPL_SEND_TIMEOUT_MS = 120_000;
 const REPL_SEND_POLL_MS = 100;
 const REPL_SEND_CAPTURE_LINES = 5_000;
 const REPL_CONTROL_ROOT = process.platform === "win32" ? tmpdir() : "/tmp";
+const REPL_HISTORY_ROOT = join(REPL_CONTROL_ROOT, "pi-repl");
+const REPL_HISTORY_FILTER_SCRIPT = String.raw`
+let line = [];
+let col = 0;
+let pendingEscape = false;
+let csi = null;
+let osc = false;
+let oscEsc = false;
+
+function ensureCol() {
+  while (line.length < col) line.push(' ');
+}
+
+function writeText(text) {
+  for (const ch of text) {
+    ensureCol();
+    line[col] = ch;
+    col += 1;
+  }
+}
+
+function clearToEndOfLine() {
+  line.length = Math.min(line.length, col);
+}
+
+function emitCurrentLine() {
+  process.stdout.write(line.join('').replace(/[ \t]+$/g, '') + '\n');
+  line = [];
+  col = 0;
+}
+
+function firstParam(buffer) {
+  const raw = buffer.split(';', 1)[0];
+  const value = Number.parseInt(raw || '1', 10);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+function handleCsi(finalChar, buffer) {
+  const n = firstParam(buffer);
+  if (finalChar === 'C') {
+    col += n;
+    return;
+  }
+  if (finalChar === 'D') {
+    col = Math.max(0, col - n);
+    return;
+  }
+  if (finalChar === 'G') {
+    col = Math.max(0, n - 1);
+    return;
+  }
+  if (finalChar === 'K') {
+    const mode = buffer === '2' ? 2 : buffer === '1' ? 1 : 0;
+    if (mode === 2) {
+      line = [];
+      col = 0;
+      return;
+    }
+    if (mode === 1) {
+      for (let i = 0; i < col; i += 1) line[i] = ' ';
+      return;
+    }
+    clearToEndOfLine();
+  }
+}
+
+function handleChar(ch) {
+  if (osc) {
+    if (oscEsc && ch === '\\') {
+      osc = false;
+      oscEsc = false;
+      return;
+    }
+    oscEsc = ch === '\u001b';
+    if (ch === '\u0007') {
+      osc = false;
+      oscEsc = false;
+    }
+    return;
+  }
+
+  if (csi !== null) {
+    if (ch >= '@' && ch <= '~') {
+      handleCsi(ch, csi);
+      csi = null;
+      return;
+    }
+    csi += ch;
+    return;
+  }
+
+  if (pendingEscape) {
+    pendingEscape = false;
+    if (ch === '[') {
+      csi = '';
+      return;
+    }
+    if (ch === ']') {
+      osc = true;
+      oscEsc = false;
+      return;
+    }
+    return;
+  }
+
+  if (ch === '\u001b') {
+    pendingEscape = true;
+    return;
+  }
+  if (ch === '\r') {
+    col = 0;
+    return;
+  }
+  if (ch === '\n') {
+    emitCurrentLine();
+    return;
+  }
+  if (ch === '\b' || ch === '\u007f') {
+    col = Math.max(0, col - 1);
+    return;
+  }
+  if (ch === '\t') {
+    writeText('\t');
+    return;
+  }
+  if (ch < ' ') {
+    return;
+  }
+  writeText(ch);
+}
+
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => {
+  for (const ch of chunk) handleChar(ch);
+});
+process.stdin.on('end', () => {
+  if (line.length > 0) {
+    process.stdout.write(line.join('').replace(/[ \t]+$/g, '') + '\n');
+  }
+});
+`;
 const REPL_RUNTIME_OPTION = "@pi_repl_runtime";
+const REPL_HISTORY_OPTION = "@pi_repl_history_path";
 
 type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 type PythonRuntime = "python" | "ipython";
@@ -43,6 +185,7 @@ type ReplCommand =
 type SessionInfo = {
 	sessionName: string;
 	runtime?: string;
+	historyPath?: string;
 	currentCommand: string;
 	currentPath: string;
 	tail: string;
@@ -121,6 +264,10 @@ function getSessionNameForSelector(selector: SessionSelector): string {
 	return selector === "julia" ? DEFAULT_JULIA_SESSION : DEFAULT_PYTHON_SESSION;
 }
 
+function getSessionHistoryPath(sessionName: string): string {
+	return join(REPL_HISTORY_ROOT, `${sessionName}.history.log`);
+}
+
 function sanitizeNamePart(value: string): string {
 	return value
 		.trim()
@@ -156,7 +303,7 @@ function formatUsage(): string {
 		"  - /repl julia manages the shared tmux session pi-repl-julia",
 		"  - /repl status, /repl attach, and /repl stop can target Python/IPython or Julia",
 		"  - /repl env inspects the shared Python/IPython session",
-		"  - the repl_send tool currently targets the shared Python/IPython session only",
+		"  - the repl_send tool can execute code in the shared Python/IPython or Julia session",
 		"",
 		"Examples:",
 		"  /repl ipython",
@@ -348,6 +495,39 @@ async function readTmuxSessionOption(
 	return value || undefined;
 }
 
+async function enableSessionHistoryLogging(
+	pi: ExtensionAPI,
+	sessionName: string,
+	cwd: string,
+): Promise<{ historyPath?: string; warning?: string }> {
+	const historyPath = getSessionHistoryPath(sessionName);
+	mkdirSync(REPL_HISTORY_ROOT, { recursive: true });
+	writeFileSync(historyPath, "", "utf-8");
+
+	const pipeCommand = `${shellQuote(process.execPath)} -e ${shellQuote(REPL_HISTORY_FILTER_SCRIPT)} >> ${shellQuote(historyPath)}`;
+	const result = await execTmux(pi, ["pipe-pane", "-o", "-t", getPaneTarget(sessionName), pipeCommand], cwd, 5_000);
+	if (result.code !== 0) {
+		const reason = result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`;
+		return {
+			warning: `History logging could not be enabled for ${sessionName}: ${reason}`,
+		};
+	}
+
+	const stored = await setTmuxSessionOption(pi, sessionName, REPL_HISTORY_OPTION, historyPath, cwd);
+	if (!stored) {
+		return {
+			historyPath,
+			warning: `History logging is active for ${sessionName}, but the history path could not be recorded in tmux metadata.`,
+		};
+	}
+
+	return { historyPath };
+}
+
+async function disableSessionHistoryLogging(pi: ExtensionAPI, sessionName: string, cwd: string): Promise<void> {
+	await execTmux(pi, ["pipe-pane", "-t", getPaneTarget(sessionName)], cwd, 3_000).catch(() => undefined);
+}
+
 async function readSessionInfo(pi: ExtensionAPI, sessionName: string, cwd: string): Promise<SessionInfo | null> {
 	if (!(await tmuxSessionExists(pi, sessionName, cwd))) return null;
 
@@ -364,10 +544,12 @@ async function readSessionInfo(pi: ExtensionAPI, sessionName: string, cwd: strin
 
 	const tailResult = await execTmux(pi, ["capture-pane", "-p", "-t", target, "-S", `-${DEFAULT_CAPTURE_LINES}`], cwd, 3_000);
 	const runtime = await readTmuxSessionOption(pi, sessionName, REPL_RUNTIME_OPTION, cwd);
+	const historyPath = await readTmuxSessionOption(pi, sessionName, REPL_HISTORY_OPTION, cwd);
 
 	return {
 		sessionName: resolvedSessionName,
 		runtime,
+		historyPath,
 		currentCommand: currentCommand || "unknown",
 		currentPath: currentPath || cwd,
 		tail: tailResult.stdout.trim(),
@@ -387,6 +569,7 @@ function formatSessionInfo(info: SessionInfo): string {
 		...(info.runtime ? [`Runtime: ${info.runtime}`] : []),
 		`Current command: ${info.currentCommand}`,
 		`Path: ${info.currentPath}`,
+		...(info.historyPath ? [`History log: ${info.historyPath}`] : []),
 		"",
 		formatAttachInstructions(info.sessionName),
 	];
@@ -964,9 +1147,14 @@ async function startDefaultPythonSession(
 		return;
 	}
 
+	const history = await enableSessionHistoryLogging(pi, DEFAULT_PYTHON_SESSION, ctx.cwd);
 	await setTmuxSessionOption(pi, DEFAULT_PYTHON_SESSION, REPL_RUNTIME_OPTION, runtime, ctx.cwd);
 	const info = await waitForPythonSessionInfo(pi, ctx.cwd, shellLaunch.shell, runtime);
 	const replLabel = runtime === "ipython" ? "IPython" : "Python";
+
+	if (history.warning) {
+		notify(ctx, history.warning, "warning");
+	}
 
 	notify(
 		ctx,
@@ -1011,6 +1199,8 @@ function buildReplStatusDetails(
 			running: Boolean(python),
 			sessionName: python?.sessionName ?? DEFAULT_PYTHON_SESSION,
 			runtime: python?.runtime ?? undefined,
+			historyPath: python?.historyPath ?? undefined,
+			historyLogging: Boolean(python?.historyPath),
 			currentCommand: python?.currentCommand ?? undefined,
 			currentPath: python?.currentPath ?? undefined,
 			attachCommand: formatAttachCommand(DEFAULT_PYTHON_SESSION),
@@ -1019,6 +1209,8 @@ function buildReplStatusDetails(
 			running: Boolean(julia),
 			sessionName: julia?.sessionName ?? DEFAULT_JULIA_SESSION,
 			runtime: julia?.runtime ?? undefined,
+			historyPath: julia?.historyPath ?? undefined,
+			historyLogging: Boolean(julia?.historyPath),
 			currentCommand: julia?.currentCommand ?? undefined,
 			currentPath: julia?.currentPath ?? undefined,
 			attachCommand: formatAttachCommand(DEFAULT_JULIA_SESSION),
@@ -1027,6 +1219,8 @@ function buildReplStatusDetails(
 			target: session.selector,
 			sessionName: session.info.sessionName,
 			runtime: session.info.runtime,
+			historyPath: session.info.historyPath,
+			historyLogging: Boolean(session.info.historyPath),
 			currentCommand: session.info.currentCommand,
 			currentPath: session.info.currentPath,
 			attachCommand: formatAttachCommand(session.info.sessionName),
@@ -1061,8 +1255,13 @@ async function startDefaultJuliaSession(pi: ExtensionAPI, ctx: ExtensionCommandC
 		return;
 	}
 
+	const history = await enableSessionHistoryLogging(pi, DEFAULT_JULIA_SESSION, ctx.cwd);
 	await setTmuxSessionOption(pi, DEFAULT_JULIA_SESSION, REPL_RUNTIME_OPTION, "julia", ctx.cwd);
 	const info = await waitForJuliaSessionInfo(pi, ctx.cwd, shellLaunch.shell);
+
+	if (history.warning) {
+		notify(ctx, history.warning, "warning");
+	}
 
 	notify(
 		ctx,
@@ -1158,6 +1357,7 @@ async function stopReplSession(
 		return;
 	}
 
+	await disableSessionHistoryLogging(pi, sessionName, ctx.cwd);
 	const result = await execTmux(pi, ["kill-session", "-t", sessionName], ctx.cwd, 5_000);
 	if (result.code !== 0) {
 		const reason = result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`;
@@ -1319,6 +1519,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use this tool before claiming whether a shared REPL is running, especially after a previous failure or status change.",
 			"If the user asks specifically about Julia, use target='julia'. If they ask specifically about Python or IPython, use target='python'.",
+			"If you need context about prior direct REPL interaction, inspect repl_status details and read the session history file listed there.",
 		],
 		parameters: REPL_STATUS_PARAMS,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1390,6 +1591,8 @@ export default function (pi: ExtensionAPI) {
 			"Use this tool only after a /repl python, /repl ipython, or /repl julia session has been started.",
 			"If the user asks to run code in Julia or in the shared Julia REPL, use target='julia'. Otherwise use the shared Python/IPython session.",
 			"Use repl_status before claiming whether the shared REPL is active if there has been a prior failure or a possible state change.",
+			"If you need context about prior direct REPL interaction, inspect repl_status details and read the session history file listed there.",
+			"The session history file is raw tmux pane output, so expect prompts and echoed input as well as results.",
 			"This is a shared long-lived session: inspect state before mutating it, and do not assume variables already exist.",
 			"Keep snippets small. If you need a value back reliably, print it explicitly.",
 			"Avoid blocking interactive input() prompts or long-running code unless the user explicitly wants that.",

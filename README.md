@@ -18,6 +18,7 @@ With `pi-repl` you can:
 - attach to that REPL from another terminal window
 - work in the REPL yourself as normal
 - ask pi, in natural language, to run code in the shared REPL
+- let pi read the raw shared REPL transcript for extra context when needed
 - check which shared REPL sessions are running
 - inspect which Python interpreter and environment the shared Python/IPython REPL is using with `/repl env`
 - stop the shared REPL when you are done
@@ -74,6 +75,8 @@ Restart pi after installing.
 Notes:
 
 - `repl_status` is what pi uses to check which shared REPL sessions are currently running
+- while a shared REPL is running, `repl_status` also exposes the raw session history log path
+- pi can read that history file for context about what has already happened in the shared REPL
 - the relevant shared session must already be running before `repl_send`
 - you can ask pi naturally to run code in Python, IPython, or Julia; pi chooses the tool parameters internally
 - for plain Python, `print(...)` is the safest way to get values back reliably
@@ -122,6 +125,8 @@ Example requests once the REPL is running:
 ## Notes
 
 - `tmux` is required.
+- While a shared REPL is running, `pi-repl` keeps a raw transcript log of the tmux pane output for that session.
+- That transcript is plain text and may include prompts, echoed input, output, and errors.
 - `/repl env` is currently implemented for Python/IPython only.
 
 ## Related extensions
