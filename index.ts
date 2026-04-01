@@ -6,7 +6,7 @@ import {
 	truncateTail,
 	type TruncationResult,
 } from "@mariozechner/pi-coding-agent";
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
@@ -180,10 +180,10 @@ type SessionSelector = "python" | "julia" | "r" | "ghci" | "clojure";
 
 type ReplCommand =
 	| { action: "help" }
-	| { action: "status"; runtime?: SupportedRuntime }
-	| { action: "env"; runtime?: SupportedRuntime }
-	| { action: "stop"; runtime?: SupportedRuntime }
-	| { action: "attach"; runtime?: SupportedRuntime }
+	| { action: "status"; runtime?: ManagedRuntime }
+	| { action: "env"; runtime?: ManagedRuntime }
+	| { action: "stop"; runtime?: ManagedRuntime }
+	| { action: "attach"; runtime?: ManagedRuntime }
 	| { action: "start"; runtime: SupportedRuntime; name?: string }
 	| { action: "error"; message: string };
 
@@ -368,10 +368,16 @@ function parseReplCommand(args: string): ReplCommand {
 					message: `Unknown argument for /repl ${firstLower}: ${rest[0]}`,
 				};
 			}
-			return { action: firstLower, runtime: selector };
+			if (firstLower === "status") return { action: "status", runtime: selector };
+			if (firstLower === "env") return { action: "env", runtime: selector };
+			if (firstLower === "stop") return { action: "stop", runtime: selector };
+			return { action: "attach", runtime: selector };
 		}
 
-		return { action: firstLower };
+		if (firstLower === "status") return { action: "status" };
+		if (firstLower === "env") return { action: "env" };
+		if (firstLower === "stop") return { action: "stop" };
+		return { action: "attach" };
 	}
 
 	if (!isSupportedRuntime(firstLower)) {
@@ -1159,7 +1165,7 @@ function normalizeReplSendTarget(target?: string): SessionSelector | undefined {
 async function runReplCode(
 	pi: ExtensionAPI,
 	params: { code: string; target?: string; timeoutMs?: number },
-	ctx: ExtensionCommandContext,
+	ctx: ExtensionContext,
 	signal?: AbortSignal,
 ): Promise<{ output: string; details: ReplSendDetails }> {
 	const code = params.code ?? "";
@@ -1312,7 +1318,7 @@ function formatReplSendResult(output: string, details: ReplSendDetails): { text:
 async function executeReplSend(
 	pi: ExtensionAPI,
 	params: { code: string; target?: string; timeoutMs?: number },
-	ctx: ExtensionCommandContext,
+	ctx: ExtensionContext,
 	signal?: AbortSignal,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: ReplSendDetails }> {
 	const execution = await runReplCode(pi, params, ctx, signal);
