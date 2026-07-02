@@ -13,13 +13,14 @@ import { existsSync, mkdirSync, mkdtempSync, unlinkSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const SUPPORTED_RUNTIMES = ["julia", "python", "ipython", "r", "ghci", "clojure", "clj", "ruby", "bun"] as const;
+const SUPPORTED_RUNTIMES = ["julia", "python", "ipython", "r", "ghci", "clojure", "clj", "ruby", "java", "bun"] as const;
 const DEFAULT_PYTHON_SESSION = "pi-repl-python";
 const DEFAULT_JULIA_SESSION = "pi-repl-julia";
 const DEFAULT_R_SESSION = "pi-repl-r";
 const DEFAULT_GHCI_SESSION = "pi-repl-ghci";
 const DEFAULT_CLOJURE_SESSION = "pi-repl-clojure";
 const DEFAULT_RUBY_SESSION = "pi-repl-ruby";
+const DEFAULT_JAVA_SESSION = "pi-repl-java";
 const DEFAULT_CAPTURE_LINES = 20;
 const DEFAULT_STARTUP_WAIT_MS = 5_000;
 const DEFAULT_STARTUP_POLL_MS = 250;
@@ -175,9 +176,9 @@ const REPL_HISTORY_OPTION = "@pi_repl_history_path";
 type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 type PythonRuntime = "python" | "ipython";
 type ClojureRuntime = "clojure" | "clj";
-type ManagedRuntime = PythonRuntime | "julia" | "r" | "ghci" | ClojureRuntime | "ruby";
-type ImplementedRuntime = PythonRuntime | "julia" | "r" | "ghci" | "clojure" | "ruby";
-type SessionSelector = "python" | "julia" | "r" | "ghci" | "clojure" | "ruby";
+type ManagedRuntime = PythonRuntime | "julia" | "r" | "ghci" | ClojureRuntime | "ruby" | "java";
+type ImplementedRuntime = PythonRuntime | "julia" | "r" | "ghci" | "clojure" | "ruby" | "java";
+type SessionSelector = "python" | "julia" | "r" | "ghci" | "clojure" | "ruby" | "java";
 
 type ReplCommand =
 	| { action: "help" }
@@ -263,7 +264,7 @@ function isClojureRuntime(value: SupportedRuntime): value is ClojureRuntime {
 }
 
 function isSessionTargetRuntime(value: string): value is ManagedRuntime {
-	return value === "python" || value === "ipython" || value === "julia" || value === "r" || value === "ghci" || value === "clojure" || value === "clj" || value === "ruby";
+	return value === "python" || value === "ipython" || value === "julia" || value === "r" || value === "ghci" || value === "clojure" || value === "clj" || value === "ruby" || value === "java";
 }
 
 function toSessionSelector(runtime: ManagedRuntime): SessionSelector {
@@ -272,6 +273,7 @@ function toSessionSelector(runtime: ManagedRuntime): SessionSelector {
 	if (runtime === "ghci") return "ghci";
 	if (runtime === "clojure" || runtime === "clj") return "clojure";
 	if (runtime === "ruby") return "ruby";
+	if (runtime === "java") return "java";
 	return "python";
 }
 
@@ -281,6 +283,7 @@ function getSessionNameForSelector(selector: SessionSelector): string {
 	if (selector === "ghci") return DEFAULT_GHCI_SESSION;
 	if (selector === "clojure") return DEFAULT_CLOJURE_SESSION;
 	if (selector === "ruby") return DEFAULT_RUBY_SESSION;
+	if (selector === "java") return DEFAULT_JAVA_SESSION;
 	return DEFAULT_PYTHON_SESSION;
 }
 
@@ -315,15 +318,17 @@ function formatUsage(): string {
 		"  /repl ghci",
 		"  /repl clojure",
 		"  /repl ruby",
-		"  /repl status [python|julia|r|ghci|clojure|ruby]",
+		"  /repl java",
+		"  /repl status [python|julia|r|ghci|clojure|ruby|java]",
 		"  /repl env [python]",
-		"  /repl attach [python|julia|r|ghci|clojure|ruby]",
-		"  /repl stop [python|julia|r|ghci|clojure|ruby]",
+		"  /repl attach [python|julia|r|ghci|clojure|ruby|java]",
+		"  /repl stop [python|julia|r|ghci|clojure|ruby|java]",
 		"",
-		"Supported runtimes right now: python, ipython, julia, r, ghci, clojure, ruby",
+		"Supported runtimes right now: python, ipython, julia, r, ghci, clojure, ruby, java",
 		"For R, both /repl R and /repl r work. The same applies to /lab, /repl status, /repl attach, and /repl stop.",
 		"For Clojure, /repl clojure is canonical and /repl clj also works. The same applies to /lab, /repl status, /repl attach, and /repl stop.",
 		"For Ruby, /repl ruby is the command. The Ruby REPL (irb) is invoked internally.",
+		"For Java, /repl java is the command. The Java REPL (jshell) is invoked internally.",
 		"",
 		"Current real implementation:",
 		"  - /repl python and /repl ipython manage the shared tmux session pi-repl-python",
@@ -332,9 +337,10 @@ function formatUsage(): string {
 		"  - /repl ghci manages the shared tmux session pi-repl-ghci",
 		"  - /repl clojure and /repl clj manage the shared tmux session pi-repl-clojure",
 		"  - /repl ruby manages the shared tmux session pi-repl-ruby",
-		"  - /repl status, /repl attach, and /repl stop can target Python/IPython, Julia, R, GHCi, Clojure, or Ruby",
+		"  - /repl java manages the shared tmux session pi-repl-java",
+		"  - /repl status, /repl attach, and /repl stop can target Python/IPython, Julia, R, GHCi, Clojure, Ruby, or Java",
 		"  - /repl env inspects the shared Python/IPython session",
-		"  - the repl_send tool can execute code in the shared Python/IPython, Julia, R, GHCi, Clojure, or Ruby session",
+		"  - the repl_send tool can execute code in the shared Python/IPython, Julia, R, GHCi, Clojure, Ruby, or Java session",
 		"",
 		"Examples:",
 		"  /repl ipython",
@@ -343,7 +349,8 @@ function formatUsage(): string {
 		"  /repl ghci",
 		"  /repl ruby",
 		"  /repl clojure",
-		"  /repl status clojure",
+		"  /repl java",
+		"  /repl status java",
 		"  /repl attach",
 	].join("\n");
 }
@@ -481,6 +488,7 @@ function buildRuntimeLaunchCommand(runtime: ManagedRuntime): string {
 	if (runtime === "r") return "R";
 	if (runtime === "clj" || runtime === "clojure") return "clojure";
 	if (runtime === "ruby") return "irb";
+	if (runtime === "java") return "jshell";
 	return runtime;
 }
 
@@ -636,6 +644,7 @@ function getSessionDisplayName(selector: SessionSelector, info?: SessionInfo | n
 	if (selector === "ghci") return "Haskell (GHCi)";
 	if (selector === "clojure") return "Clojure";
 	if (selector === "ruby") return "Ruby (irb)";
+	if (selector === "java") return "Java (jshell)";
 	if (info?.runtime === "ipython") return "Python/IPython";
 	return "Python/IPython";
 }
@@ -657,6 +666,8 @@ async function listRunningSharedSessions(
 	if (clojureInfo) sessions.push({ selector: "clojure", info: clojureInfo });
 	const rubyInfo = await readSessionInfo(pi, DEFAULT_RUBY_SESSION, cwd);
 	if (rubyInfo) sessions.push({ selector: "ruby", info: rubyInfo });
+	const javaInfo = await readSessionInfo(pi, DEFAULT_JAVA_SESSION, cwd);
+	if (javaInfo) sessions.push({ selector: "java", info: javaInfo });
 	return sessions;
 }
 
@@ -788,6 +799,26 @@ async function waitForRubySessionInfo(
 	return latestInfo;
 }
 
+async function waitForJavaSessionInfo(
+	pi: ExtensionAPI,
+	cwd: string,
+	shellPath: string,
+): Promise<SessionInfo | null> {
+	const deadline = Date.now() + DEFAULT_STARTUP_WAIT_MS;
+	const shellName = shellPath.split("/").pop() ?? shellPath;
+	let latestInfo: SessionInfo | null = null;
+
+	while (Date.now() < deadline) {
+		latestInfo = await readSessionInfo(pi, DEFAULT_JAVA_SESSION, cwd);
+		if (!latestInfo) return null;
+		if (latestInfo.currentCommand !== shellName) return latestInfo;
+		if (/jshell>\s*$/.test(latestInfo.tail)) return latestInfo;
+		await sleep(DEFAULT_STARTUP_POLL_MS);
+	}
+
+	return latestInfo;
+}
+
 type ReplControlPaths = {
 	dir: string;
 	sourceFile: string;
@@ -840,6 +871,14 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "rr.rb"),
 			doneFile: join(REPL_CONTROL_ROOT, "rr.done"),
+		};
+	}
+
+	if (sessionName === DEFAULT_JAVA_SESSION) {
+		return {
+			dir: REPL_CONTROL_ROOT,
+			sourceFile: join(REPL_CONTROL_ROOT, "jr.java"),
+			doneFile: join(REPL_CONTROL_ROOT, "jr.done"),
 		};
 	}
 
@@ -944,6 +983,13 @@ function buildRubyControlSource(code: string, doneFile: string): string {
 	].join("\n");
 }
 
+function buildJavaControlSource(code: string, doneFile: string): string {
+	return [
+		`new java.io.File(${JSON.stringify(doneFile)}).writeText("done\\n");`,
+		...code.split("\n"),
+	].join("\n");
+}
+
 function buildClojureControlSource(code: string, doneFile: string): string {
 	return [
 		"(let [code " + JSON.stringify(code) + "]",
@@ -967,6 +1013,7 @@ function buildReplControlSource(runtime: ImplementedRuntime, code: string, doneF
 	if (runtime === "ghci") return buildGhciControlSource(code);
 	if (runtime === "clojure") return buildClojureControlSource(code, doneFile);
 	if (runtime === "ruby") return buildRubyControlSource(code, doneFile);
+	if (runtime === "java") return buildJavaControlSource(code, doneFile);
 	return buildPythonControlSource(runtime, code, doneFile);
 }
 
@@ -986,6 +1033,9 @@ function buildReplSubmissionLine(runtime: ImplementedRuntime, sourceFile: string
 	}
 	if (runtime === "ruby") {
 		return `load ${quotedPath}`;
+	}
+	if (runtime === "java") {
+		return `/open ${quotedPath}`;
 	}
 	return `exec(open(${quotedPath}).read(),globals())`;
 }
@@ -1118,7 +1168,7 @@ function extractPaneDelta(before: string, after: string): string {
 
 function cleanupReplDelta(delta: string, submissionLine: string, previewComment?: string, completionLine?: string): string {
 	const lines = stripBoundaryBlankLines(delta).split("\n");
-	const loaderHints = [submissionLine, "exec(open(", "run_cell(open(", "include(", "source(", ":script ", "load-file", "/tmp/pr.py", "/tmp/jr.jl", "/tmp/rr.R", "/tmp/gr.ghci", "/tmp/cr.clj", "/tmp/rr.rb", "/tmp/pi-repl", "control.py", ":pi-repl/silent"];
+	const loaderHints = [submissionLine, "exec(open(", "run_cell(open(", "include(", "source(", ":script ", "load-file", "/open ", "/tmp/pr.py", "/tmp/jr.jl", "/tmp/rr.R", "/tmp/gr.ghci", "/tmp/cr.clj", "/tmp/rr.rb", "/tmp/jr.java", "/tmp/pi-repl", "control.py", ":pi-repl/silent"];
 	const previewHints = previewComment ? [previewComment, "# pi-repl:", "-- pi-repl:", ";; pi-repl:"] : ["# pi-repl:", "-- pi-repl:", ";; pi-repl:"];
 
 	while (lines.length > 0) {
@@ -1141,7 +1191,8 @@ function cleanupReplDelta(delta: string, submissionLine: string, previewComment?
 			/^\+\s*$/.test(first) ||
 			/^(ghci|Prelude|\*?[A-Za-z0-9_.:]+)>\s*$/.test(first) ||
 			/^[^\s>]+=>\s*$/.test(first) ||
-			/^irb\(.*\)[:\d]+[>*]\s*$/.test(first)
+			/^irb\(.*\)[:\d]+[>*]\s*$/.test(first) ||
+			/^jshell>\s*$/.test(first)
 		) {
 			lines.shift();
 			continue;
@@ -1163,6 +1214,7 @@ function cleanupReplDelta(delta: string, submissionLine: string, previewComment?
 			/^(ghci|Prelude|\*?[A-Za-z0-9_.:]+)>\s*$/.test(last) ||
 			/^[^\s>]+=>\s*$/.test(last) ||
 			/^irb\(.*\)[:\d]+[>*]\s*$/.test(last) ||
+			/^jshell>\s*$/.test(last) ||
 			last === ":pi-repl/silent"
 		) {
 			lines.pop();
@@ -1219,6 +1271,7 @@ function normalizeReplSendTarget(target?: string): SessionSelector | undefined {
 	if (trimmed === "ghci" || trimmed === "haskell") return "ghci";
 	if (trimmed === "clojure" || trimmed === "clj") return "clojure";
 	if (trimmed === "ruby" || trimmed === "irb") return "ruby";
+	if (trimmed === "java" || trimmed === "jshell") return "java";
 	throw new Error(`Unknown repl_send target: ${target}`);
 }
 
@@ -1262,6 +1315,11 @@ async function runReplCode(
 				`No default Ruby REPL session is running (${DEFAULT_RUBY_SESSION}). Start one with /repl ruby first.`,
 			);
 		}
+		if (target === "java") {
+			throw new Error(
+				`No default Java REPL session is running (${DEFAULT_JAVA_SESSION}). Start one with /repl java first.`,
+			);
+		}
 		throw new Error(
 			`No default Python/IPython REPL session is running (${DEFAULT_PYTHON_SESSION}). Start one with /repl python or /repl ipython first.`,
 		);
@@ -1294,6 +1352,11 @@ async function runReplCode(
 				`Could not inspect the default Ruby REPL session (${DEFAULT_RUBY_SESSION}). Start it again with /repl ruby.`,
 			);
 		}
+		if (target === "java") {
+			throw new Error(
+				`Could not inspect the default Java REPL session (${DEFAULT_JAVA_SESSION}). Start it again with /repl java.`,
+			);
+		}
 		throw new Error(
 			`Could not inspect the default Python/IPython REPL session (${DEFAULT_PYTHON_SESSION}). Start it again with /repl python or /repl ipython.`,
 		);
@@ -1310,7 +1373,9 @@ async function runReplCode(
 						? "clojure"
 						: target === "ruby"
 							? "ruby"
-							: normalizePythonRuntime(sessionInfo);
+							: target === "java"
+								? "java"
+								: normalizePythonRuntime(sessionInfo);
 	const timeoutMs = clampReplSendTimeout(params.timeoutMs);
 	const beforeCapture = await capturePaneOutput(pi, sessionName, ctx.cwd);
 	const prepared = prepareReplControlFiles(sessionName, runtime, code);
@@ -1542,6 +1607,13 @@ function formatNoSessionRunning(selector: SessionSelector): string {
 		].join("\n");
 	}
 
+	if (selector === "java") {
+		return [
+			`No default Java REPL session is running (${DEFAULT_JAVA_SESSION}).`,
+			"Start one with /repl java or /lab java.",
+		].join("\n");
+	}
+
 	return [
 		`No default Python/IPython REPL session is running (${DEFAULT_PYTHON_SESSION}).`,
 		"Start one with /repl python, /repl ipython, /lab python, or /lab ipython.",
@@ -1557,6 +1629,7 @@ function buildReplStatusDetails(
 	const ghci = sessions.find((session) => session.selector === "ghci")?.info;
 	const clojure = sessions.find((session) => session.selector === "clojure")?.info;
 	const ruby = sessions.find((session) => session.selector === "ruby")?.info;
+	const java = sessions.find((session) => session.selector === "java")?.info;
 
 	return {
 		python: {
@@ -1618,6 +1691,16 @@ function buildReplStatusDetails(
 			currentCommand: ruby?.currentCommand ?? undefined,
 			currentPath: ruby?.currentPath ?? undefined,
 			attachCommand: formatAttachCommand(DEFAULT_RUBY_SESSION),
+		},
+		java: {
+			running: Boolean(java),
+			sessionName: java?.sessionName ?? DEFAULT_JAVA_SESSION,
+			runtime: java?.runtime ?? undefined,
+			historyPath: java?.historyPath ?? undefined,
+			historyLogging: Boolean(java?.historyPath),
+			currentCommand: java?.currentCommand ?? undefined,
+			currentPath: java?.currentPath ?? undefined,
+			attachCommand: formatAttachCommand(DEFAULT_JAVA_SESSION),
 		},
 		runningSessions: sessions.map((session) => ({
 			target: session.selector,
@@ -1835,6 +1918,45 @@ async function startDefaultRubySession(pi: ExtensionAPI, ctx: ExtensionCommandCo
 	);
 }
 
+async function startDefaultJavaSession(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	const exists = await tmuxSessionExists(pi, DEFAULT_JAVA_SESSION, ctx.cwd);
+	if (exists) {
+		const info = await readSessionInfo(pi, DEFAULT_JAVA_SESSION, ctx.cwd);
+		notify(
+			ctx,
+			info ? `Default Java REPL session is already running.\n\n${formatSessionInfo(info)}` : ["Default Java REPL session is already running.", "", formatAttachInstructions(DEFAULT_JAVA_SESSION)].join("\n"),
+			"info",
+		);
+		return;
+	}
+
+	const shellLaunch = buildDefaultShellRuntimeCommand("java");
+	const createResult = await execTmux(pi, ["new-session", "-d", "-s", DEFAULT_JAVA_SESSION, "-c", ctx.cwd, shellLaunch.command], ctx.cwd, 10_000);
+	if (createResult.code !== 0) {
+		const reason = createResult.stderr.trim() || createResult.stdout.trim() || `exit code ${createResult.code}`;
+		notify(ctx, `Failed to create tmux session ${DEFAULT_JAVA_SESSION}: ${reason}`, "error");
+		return;
+	}
+
+	const history = await enableSessionHistoryLogging(pi, DEFAULT_JAVA_SESSION, ctx.cwd);
+	await setTmuxSessionOption(pi, DEFAULT_JAVA_SESSION, REPL_RUNTIME_OPTION, "java", ctx.cwd);
+	const info = await waitForJavaSessionInfo(pi, ctx.cwd, shellLaunch.shell);
+
+	if (history.warning) {
+		notify(ctx, history.warning, "warning");
+	}
+
+	notify(
+		ctx,
+		[
+			`Started default Java REPL session: ${DEFAULT_JAVA_SESSION}`,
+			`Launch method: ${shellLaunch.shell} -i -l -c 'jshell' inside tmux.`,
+			info ? `\n${formatSessionInfo(info)}` : ["", formatAttachInstructions(DEFAULT_JAVA_SESSION)].join("\n"),
+		].join("\n"),
+		"info",
+	);
+}
+
 async function showReplStatus(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
@@ -1890,7 +2012,7 @@ async function stopReplSession(
 		if (running.length === 0) {
 			notify(
 				ctx,
-				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, /repl julia, /repl R, /repl ghci, /repl clojure, or /repl ruby.",
+				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, /repl julia, /repl R, /repl ghci, /repl clojure, /repl ruby, or /repl java.",
 				"info",
 			);
 			return;
@@ -1906,6 +2028,8 @@ async function stopReplSession(
 					"/repl stop r",
 					"/repl stop ghci",
 					"/repl stop clojure",
+					"/repl stop ruby",
+					"/repl stop java",
 				].join("\n"),
 				"warning",
 			);
@@ -1929,7 +2053,7 @@ async function stopReplSession(
 		return;
 	}
 
-	const label = selector === "julia" ? "Julia" : selector === "r" ? "R" : selector === "ghci" ? "Haskell (GHCi)" : selector === "clojure" ? "Clojure" : selector === "ruby" ? "Ruby (irb)" : "Python/IPython";
+	const label = selector === "julia" ? "Julia" : selector === "r" ? "R" : selector === "ghci" ? "Haskell (GHCi)" : selector === "clojure" ? "Clojure" : selector === "ruby" ? "Ruby (irb)" : selector === "java" ? "Java (jshell)" : "Python/IPython";
 	notify(ctx, `Stopped default ${label} REPL session: ${sessionName}`, "info");
 }
 
@@ -1943,7 +2067,7 @@ async function attachReplSession(
 		if (running.length === 0) {
 			notify(
 				ctx,
-				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, /repl julia, /repl R, /repl ghci, /repl clojure, or /repl ruby.",
+				"No shared REPL sessions are running. Start one with /repl python, /repl ipython, /repl julia, /repl R, /repl ghci, /repl clojure, /repl ruby, or /repl java.",
 				"info",
 			);
 			return;
@@ -2083,6 +2207,16 @@ async function handleRepl(pi: ExtensionAPI, args: string, ctx: ExtensionCommandC
 				return;
 			}
 
+			if (parsed.runtime === "java") {
+				if (parsed.name) {
+					notify(ctx, "Named Java sessions are not implemented yet. For now, use /repl java with no --name.", "warning");
+					return;
+				}
+
+				await startDefaultJavaSession(pi, ctx);
+				return;
+			}
+
 			const sessionName = buildSessionName(parsed.runtime, parsed.name);
 			const nameNote = parsed.name ? ` (from name: ${parsed.name})` : "";
 			notify(
@@ -2091,7 +2225,7 @@ async function handleRepl(pi: ExtensionAPI, args: string, ctx: ExtensionCommandC
 					"Scaffold only: parsed REPL start request.",
 					`Runtime: ${parsed.runtime}`,
 					`tmux session: ${sessionName}${nameNote}`,
-					"Only Python, IPython, Julia, R, GHCi, Clojure, and Ruby session management are implemented so far.",
+					"Only Python, IPython, Julia, R, GHCi, Clojure, Ruby, and Java session management are implemented so far.",
 				].join("\n"),
 				"info",
 			);
@@ -2118,11 +2252,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "repl_status",
 		label: "REPL Status",
-		description: "Inspect shared REPL session state for Python/IPython, Julia, R, Haskell (GHCi), Clojure, and Ruby.",
-		promptSnippet: "Check whether the shared Python/IPython, Julia, R, Haskell (GHCi), Clojure, and Ruby REPL sessions are running.",
+		description: "Inspect shared REPL session state for Python/IPython, Julia, R, Haskell (GHCi), Clojure, Ruby, and Java.",
+		promptSnippet: "Check whether the shared Python/IPython, Julia, R, Haskell (GHCi), Clojure, Ruby, and Java REPL sessions are running.",
 		promptGuidelines: [
 			"Use this tool before claiming whether a shared REPL is running, especially after a previous failure or status change.",
-			"If the user asks specifically about Julia, use target='julia'. If they ask specifically about R, use target='r'. If they ask specifically about GHCi or Haskell, use target='ghci'. If they ask specifically about Clojure, use target='clojure'. If they ask specifically about Ruby or IRB, use target='ruby'. If they ask specifically about Python or IPython, use target='python'.",
+			"If the user asks specifically about Julia, use target='julia'. If they ask specifically about R, use target='r'. If they ask specifically about GHCi or Haskell, use target='ghci'. If they ask specifically about Clojure, use target='clojure'. If they ask specifically about Ruby or IRB, use target='ruby'. If they ask specifically about Java or jshell, use target='java'. If they ask specifically about Python or IPython, use target='python'.",
 			"If you need context about prior direct REPL interaction, inspect repl_status details and read the session history file listed there.",
 		],
 		parameters: REPL_STATUS_PARAMS,
@@ -2135,6 +2269,7 @@ export default function (pi: ExtensionAPI) {
 				else if (targetRaw === "ghci" || targetRaw === "haskell") target = "ghci";
 				else if (targetRaw === "clojure" || targetRaw === "clj") target = "clojure";
 				else if (targetRaw === "ruby" || targetRaw === "irb") target = "ruby";
+				else if (targetRaw === "java" || targetRaw === "jshell") target = "java";
 				else if (targetRaw === "python" || targetRaw === "ipython") target = "python";
 				else throw new Error(`Unknown repl_status target: ${targetRaw}`);
 			}
@@ -2193,11 +2328,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "repl_send",
 		label: "REPL Send",
-		description: `Execute code in the shared default Python/IPython, Julia, R, Haskell (GHCi), Clojure, or Ruby tmux REPL sessions (${DEFAULT_PYTHON_SESSION}, ${DEFAULT_JULIA_SESSION}, ${DEFAULT_R_SESSION}, ${DEFAULT_GHCI_SESSION}, ${DEFAULT_CLOJURE_SESSION}, ${DEFAULT_RUBY_SESSION}). Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first).`,
-		promptSnippet: "Execute a small snippet in the shared Python/IPython, Julia, R, Haskell (GHCi), Clojure, or Ruby REPL and return its output.",
+		description: `Execute code in the shared default Python/IPython, Julia, R, Haskell (GHCi), Clojure, Ruby, or Java tmux REPL sessions (${DEFAULT_PYTHON_SESSION}, ${DEFAULT_JULIA_SESSION}, ${DEFAULT_R_SESSION}, ${DEFAULT_GHCI_SESSION}, ${DEFAULT_CLOJURE_SESSION}, ${DEFAULT_RUBY_SESSION}, ${DEFAULT_JAVA_SESSION}). Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first).`,
+		promptSnippet: "Execute a small snippet in the shared Python/IPython, Julia, R, Haskell (GHCi), Clojure, Ruby, or Java REPL and return its output.",
 		promptGuidelines: [
-			"Use this tool only after a /repl python, /repl ipython, /repl julia, /repl R, /repl ghci, /repl clojure, or /repl ruby session has been started.",
-			"If the user asks to run code in Julia or in the shared Julia REPL, use target='julia'. If they ask to run code in R or in the shared R REPL, use target='r'. If they ask to run code in GHCi, Haskell, or the shared Haskell REPL, use target='ghci'. If they ask to run code in Clojure or in the shared Clojure REPL, use target='clojure'. If they ask to run code in Ruby or IRB or the shared Ruby REPL, use target='ruby'. Otherwise use the shared Python/IPython session.",
+			"Use this tool only after a /repl python, /repl ipython, /repl julia, /repl R, /repl ghci, /repl clojure, /repl ruby, or /repl java session has been started.",
+			"If the user asks to run code in Julia or in the shared Julia REPL, use target='julia'. If they ask to run code in R or in the shared R REPL, use target='r'. If they ask to run code in GHCi, Haskell, or the shared Haskell REPL, use target='ghci'. If they ask to run code in Clojure or in the shared Clojure REPL, use target='clojure'. If they ask to run code in Ruby or IRB or the shared Ruby REPL, use target='ruby'. If they ask to run code in Java or jshell or the shared Java REPL, use target='java'. Otherwise use the shared Python/IPython session.",
 			"Use repl_status before claiming whether the shared REPL is active if there has been a prior failure or a possible state change.",
 			"If you need context about prior direct REPL interaction, inspect repl_status details and read the session history file listed there.",
 			"The session history file is raw tmux pane output, so expect prompts and echoed input as well as results.",
