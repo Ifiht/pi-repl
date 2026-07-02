@@ -348,9 +348,9 @@ function formatUsage(): string {
 		"  /repl R",
 		"  /repl ghci",
 		"  /repl ruby",
-		"  /repl clojure",
 		"  /repl java",
-		"  /repl status java",
+		"  /repl clojure",
+		"  /repl status clojure",
 		"  /repl attach",
 	].join("\n");
 }
@@ -985,7 +985,7 @@ function buildRubyControlSource(code: string, doneFile: string): string {
 
 function buildJavaControlSource(code: string, doneFile: string): string {
 	return [
-		`new java.io.File(${JSON.stringify(doneFile)}).writeText("done\\n");`,
+		`java.nio.file.Files.write(java.nio.file.Paths.get(${JSON.stringify(doneFile)}), "done\\n".getBytes());`,
 		...code.split("\n"),
 	].join("\n");
 }
