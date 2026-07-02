@@ -973,7 +973,7 @@ function buildRubyControlSource(code: string, doneFile: string): string {
 	return [
 		"begin",
 		`  __pi_repl_code = ${JSON.stringify(code)}`,
-		"  __pi_repl_result = eval(__pi_repl_code, binding, '<pi-repl>', 1)",
+		"  __pi_repl_result = eval(__pi_repl_code, TOPLEVEL_BINDING, '<pi-repl>', 1)",
 		"  p __pi_repl_result unless __pi_repl_result.nil?",
 		"rescue Exception => __pi_repl_e",
 		"  $stderr.puts __pi_repl_e.full_message(highlight: false)",
