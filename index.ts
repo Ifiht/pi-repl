@@ -210,7 +210,7 @@ type ReplSendDetails = {
 };
 
 const REPL_SEND_PARAMS = Type.Object({
-	code: Type.String({ description: "Python, IPython, Julia, R, GHCi, or Clojure code to execute in the shared REPL session." }),
+	code: Type.String({ description: "Python, IPython, Julia, R, GHCi, Ruby, Java, or Clojure code to execute in the shared REPL session." }),
 	target: Type.Optional(
 		Type.String({
 			description: "Optional target REPL: python, julia, r, ghci, or clojure. If omitted, repl_send uses the shared Python/IPython session.",
@@ -228,7 +228,7 @@ const REPL_SEND_PARAMS = Type.Object({
 const REPL_STATUS_PARAMS = Type.Object({
 	target: Type.Optional(
 		Type.String({
-			description: "Optional session target: python, julia, r, ghci, or clojure. If omitted, report all shared REPL sessions.",
+			description: "Optional session target: python, julia, r, ghci, ruby, java, or clojure. If omitted, report all shared REPL sessions.",
 		}),
 	),
 });
