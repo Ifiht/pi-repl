@@ -1035,7 +1035,7 @@ function buildReplSubmissionLine(runtime: ImplementedRuntime, sourceFile: string
 		return `load ${quotedPath}`;
 	}
 	if (runtime === "java") {
-		return `/open ${quotedPath}`;
+		return `/open ${sourceFile}`;
 	}
 	return `exec(open(${quotedPath}).read(),globals())`;
 }
