@@ -1054,7 +1054,7 @@ function buildReplPreviewComment(runtime: ImplementedRuntime, code: string): str
 			return undefined;
 		}
 	}
-	const prefix = runtime === "ghci" ? "--" : runtime === "clojure" ? ";;" : "#";
+	const prefix = runtime === "ghci" ? "--" : runtime === "clojure" ? ";;" : runtime === "java" ? "//" : "#";
 	return `${prefix} pi-repl: running ${lines.length}-line snippet`;
 }
 
