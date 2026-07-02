@@ -985,8 +985,13 @@ function buildRubyControlSource(code: string, doneFile: string): string {
 
 function buildJavaControlSource(code: string, doneFile: string): string {
 	return [
-		`java.nio.file.Files.write(java.nio.file.Paths.get(${JSON.stringify(doneFile)}), "done\\n".getBytes());`,
+		"try {",
 		...code.split("\n"),
+		"} catch (Throwable __pi_e) {",
+		"    __pi_e.printStackTrace();",
+		"} finally {",
+		`    java.nio.file.Files.write(java.nio.file.Paths.get(${JSON.stringify(doneFile)}), "done\\n".getBytes());`,
+		"}",
 	].join("\n");
 }
 
