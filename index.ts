@@ -830,7 +830,7 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 		return {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "pr.py"),
-			doneFile: join(REPL_CONTROL_ROOT, "pr.done"),
+			doneFile: join(REPL_CONTROL_ROOT, "pr.py.done"),
 		};
 	}
 
@@ -838,7 +838,7 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 		return {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "jr.jl"),
-			doneFile: join(REPL_CONTROL_ROOT, "jr.done"),
+			doneFile: join(REPL_CONTROL_ROOT, "jr.jl.done"),
 		};
 	}
 
@@ -846,7 +846,7 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 		return {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "rr.R"),
-			doneFile: join(REPL_CONTROL_ROOT, "rr.done"),
+			doneFile: join(REPL_CONTROL_ROOT, "rr.R.done"),
 		};
 	}
 
@@ -854,7 +854,7 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 		return {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "gr.ghci"),
-			doneFile: join(REPL_CONTROL_ROOT, "gr.done"),
+			doneFile: join(REPL_CONTROL_ROOT, "gr.ghci.done"),
 		};
 	}
 
@@ -862,7 +862,7 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 		return {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "cr.clj"),
-			doneFile: join(REPL_CONTROL_ROOT, "cr.done"),
+			doneFile: join(REPL_CONTROL_ROOT, "cr.clj.done"),
 		};
 	}
 
@@ -870,7 +870,7 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 		return {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "rr.rb"),
-			doneFile: join(REPL_CONTROL_ROOT, "rr.done"),
+			doneFile: join(REPL_CONTROL_ROOT, "rr.rb.done"),
 		};
 	}
 
@@ -878,7 +878,7 @@ function getReplControlPaths(sessionName: string): ReplControlPaths {
 		return {
 			dir: REPL_CONTROL_ROOT,
 			sourceFile: join(REPL_CONTROL_ROOT, "jr.java"),
-			doneFile: join(REPL_CONTROL_ROOT, "jr.done"),
+			doneFile: join(REPL_CONTROL_ROOT, "jr.java.done"),
 		};
 	}
 
