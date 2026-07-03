@@ -170,6 +170,8 @@ Example requests once the REPL is running:
 - While a shared REPL is running, `pi-repl` keeps a raw transcript log of the tmux pane output for that session.
 - That transcript is plain text and may include prompts, echoed input, output, and errors.
 - `/repl env` is currently implemented for Python/IPython only.
+- test via `npx tsc`
+- setup build with `npm ci`
 
 ## Related extensions
 
